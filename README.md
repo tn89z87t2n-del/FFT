@@ -8,6 +8,11 @@ spracovania signálov, ktorí chcú FFT pochopiť intuitívne aj formálne.
 Obsah je v **slovenčine**, štandardné technické termíny (FFT, DFT, twiddle
 factor, butterfly, bit-reversal, bin, aliasing, windowing…) ostávajú v angličtine.
 
+> 🔴 **Živá ukážka:** https://tn89z87t2n-del.github.io/FFT/
+>
+> (Nasadzuje sa automaticky z vetvy `main` cez GitHub Actions — po prvom
+> nasadení môže prvé načítanie chvíľu trvať.)
+
 ## Čo stránka obsahuje
 
 13 sekcií so scrollytellingom a sticky navigáciou:
