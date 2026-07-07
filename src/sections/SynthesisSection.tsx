@@ -1,216 +1,223 @@
 import { useMemo, useState } from 'react'
-import { Section, Caption, LegendItem } from '../components/ui/Section'
-import { Slider } from '../components/ui/Slider'
-import { Canvas } from '../components/Canvas'
-import { clear, drawGrid, drawLine, COLORS } from '../lib/draw'
-import { sampleHarmonics, waveformHarmonics, type Harmonic, type Waveform } from '../lib/signal'
 import { InlineMath } from 'react-katex'
+import { Canvas } from '../components/Canvas'
+import { Panel, Section, Slider, Legend, Caption, Readout } from '../components/ui'
+import { clear, grid, trace, bars, C } from '../lib/draw'
+import { fft, magnitude } from '../lib/fft'
+import {
+  sampleHarmonics,
+  waveformHarmonics,
+  type Harmonic,
+  type Waveform,
+} from '../lib/signal'
 
-const N = 600
-const SERIES_COLORS = [COLORS.cyan, COLORS.amber, '#9d7bff', '#5fd17a', '#ff6fae']
-
-const PRESETS: { id: Waveform; label: string }[] = [
-  { id: 'sine', label: 'Sínus' },
-  { id: 'square', label: 'Štvorec' },
-  { id: 'sawtooth', label: 'Píla' },
-  { id: 'triangle', label: 'Trojuholník' },
-]
+const N = 512
+const SERIES = [C.cyan, C.amber, C.violet, '#5fd17a', '#ff6fae']
 
 let nextId = 100
 
-/**
- * Sekcia 2 — Fourier Synthesizer (P1).
- * Používateľ skladá signál z harmonických zložiek (frekvencia, amplitúda, fáza).
- * Presety ukazujú, ako vznikajú štandardné priebehy zo sínusoviek.
- */
+/** CH02 — Fourierova syntéza + Gibbsov jav. */
 export function SynthesisSection() {
   const [harmonics, setHarmonics] = useState<Harmonic[]>([
-    { id: 1, frequency: 1, amplitude: 1, phase: 0 },
-    { id: 2, frequency: 2, amplitude: 0.5, phase: 0 },
-    { id: 3, frequency: 3, amplitude: 0.33, phase: 0 },
+    { id: 1, freq: 1, amp: 1, phase: 0 },
+    { id: 2, freq: 3, amp: 0.33, phase: 0 },
   ])
-  const [showComponents, setShowComponents] = useState(true)
-  const [activePreset, setActivePreset] = useState<Waveform | null>(null)
+  const [preset, setPreset] = useState<Waveform | null>(null)
+  const [count, setCount] = useState(5) // počet harmonických pre preset (Gibbs slider)
+  const [showParts, setShowParts] = useState(true)
 
-  const { sum, components, yRange } = useMemo(() => {
-    const comps = harmonics.map((h) => sampleHarmonics([h], N))
+  const { sum, parts, yMax, spec } = useMemo(() => {
     const s = sampleHarmonics(harmonics, N)
-    let max = 0.5
-    for (let i = 0; i < N; i++) max = Math.max(max, Math.abs(s[i]))
-    return { sum: s, components: comps, yRange: max * 1.15 }
-  }, [harmonics])
+    const p = showParts ? harmonics.map((h) => sampleHarmonics([h], N)) : []
+    let m = 0.6
+    for (let i = 0; i < N; i++) m = Math.max(m, Math.abs(s[i]))
+    return {
+      sum: s,
+      parts: p,
+      yMax: m * 1.12,
+      spec: magnitude(fft(s)).slice(0, 40),
+    }
+  }, [harmonics, showParts])
+
+  const loadPreset = (kind: Waveform, n = count) => {
+    setPreset(kind)
+    setHarmonics(waveformHarmonics(kind, n))
+  }
 
   const update = (id: number, patch: Partial<Harmonic>) => {
-    setActivePreset(null)
+    setPreset(null)
     setHarmonics((hs) => hs.map((h) => (h.id === id ? { ...h, ...patch } : h)))
   }
-  const addHarmonic = () => {
-    setActivePreset(null)
-    setHarmonics((hs) => [
-      ...hs,
-      { id: nextId++, frequency: hs.length + 1, amplitude: 0.3, phase: 0 },
-    ])
-  }
-  const removeHarmonic = (id: number) => {
-    setActivePreset(null)
-    setHarmonics((hs) => hs.filter((h) => h.id !== id))
-  }
-  const loadPreset = (kind: Waveform) => {
-    setActivePreset(kind)
-    setHarmonics(waveformHarmonics(kind, kind === 'sine' ? 1 : 7))
-  }
+
+  // Gibbsov overshoot: max hodnota square syntézy nad 1 (teoreticky ~8.95 %)
+  const overshoot = useMemo(() => {
+    if (preset !== 'square') return null
+    let m = 0
+    for (let i = 0; i < N; i++) m = Math.max(m, sum[i])
+    return (m - 1) * 100
+  }, [preset, sum])
 
   return (
     <Section
       id="synthesis"
       index={2}
-      title="Fourierova syntéza: každý signál = súčet sínusoviek"
-      subtitle="Fourierova myšlienka: ľubovoľný periodický signál vieš poskladať zo sínusoviek rôznych frekvencií, amplitúd a fáz. Skús to — pridávaj zložky a sleduj, ako rastie výsledná vlna."
+      title="Fourierova syntéza: signál = súčet sínusoviek"
+      lead="Fourierova veta: každý periodický signál sa dá poskladať zo sínusoviek s vhodnými amplitúdami a fázami. FFT robí presný opak — signál na tieto zložky rozloží. Skladaj sám, alebo si nechaj poskladať klasické priebehy."
     >
-      <div className="grid gap-5 lg:grid-cols-[1.3fr_1fr]">
-        {/* Vizualizácia */}
-        <div className="card p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap gap-2">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  className={`btn ${activePreset === p.id ? 'btn-active' : ''}`}
-                  onClick={() => loadPreset(p.id)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
-              <input
-                type="checkbox"
-                checked={showComponents}
-                onChange={(e) => setShowComponents(e.target.checked)}
-                className="accent-accent"
-              />
-              Zobraziť zložky
-            </label>
-          </div>
-
-          <div className="lab-canvas h-72">
-            <Canvas
-              ariaLabel="Zložený signál a jeho harmonické zložky"
-              draw={(p) => {
-                clear(p)
-                drawGrid(p, { centerLine: true })
-                if (showComponents) {
-                  components.forEach((c, i) => {
-                    drawLine(p, c, {
-                      color: SERIES_COLORS[i % SERIES_COLORS.length],
-                      lineWidth: 1,
-                      yMin: -yRange,
-                      yMax: yRange,
-                    })
-                  })
-                }
-                drawLine(p, sum, {
-                  color: COLORS.accent,
-                  lineWidth: 2.5,
-                  glow: true,
-                  yMin: -yRange,
-                  yMax: yRange,
-                })
+      <div className="flex flex-wrap items-center gap-2">
+        {(
+          [
+            ['square', 'Square'],
+            ['sawtooth', 'Sawtooth'],
+            ['triangle', 'Triangle'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            className={`btn ${preset === id ? 'btn-active' : ''}`}
+            onClick={() => loadPreset(id)}
+          >
+            {label}
+          </button>
+        ))}
+        {preset && (
+          <div className="ml-2 w-44">
+            <Slider
+              label="Počet harmonických"
+              value={count}
+              min={1}
+              max={25}
+              step={1}
+              onChange={(v) => {
+                setCount(v)
+                loadPreset(preset, v)
               }}
-              deps={[sum, components, showComponents, yRange]}
+              format={(v) => `${v}`}
             />
           </div>
+        )}
+        <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            checked={showParts}
+            onChange={(e) => setShowParts(e.target.checked)}
+            className="accent-[#e8622c]"
+          />
+          zobraziť zložky
+        </label>
+      </div>
 
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
-            <LegendItem color={COLORS.accent}>výsledný signál (súčet)</LegendItem>
-            {showComponents && <LegendItem color={COLORS.cyan}>jednotlivé harmonické</LegendItem>}
+      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <Panel title="Syntetizér · súčet zložiek">
+          <div className="crt h-64">
+            <Canvas
+              ariaLabel="Súčet harmonických a jednotlivé zložky"
+              draw={(p) => {
+                clear(p)
+                grid(p, { centerLine: true })
+                parts.forEach((c, i) =>
+                  trace(p, c, {
+                    color: SERIES[i % SERIES.length],
+                    lineWidth: 1,
+                    yMin: -yMax,
+                    yMax,
+                  }),
+                )
+                trace(p, sum, { color: C.phosphor, lineWidth: 2.4, glow: true, yMin: -yMax, yMax })
+              }}
+              deps={[sum, parts, yMax]}
+            />
           </div>
-          <Caption>
-            {activePreset === 'square' &&
-              'Štvorec = len nepárne harmonické s amplitúdou 4/(πn). Čím viac členov, tým ostrejšie hrany (Gibbsove zvlnenie pri skokoch).'}
-            {activePreset === 'sawtooth' &&
-              'Píla = všetky harmonické s amplitúdou 2/(πn) a striedavým znamienkom.'}
-            {activePreset === 'triangle' &&
-              'Trojuholník = nepárne harmonické s amplitúdou 8/(π²n²) — rýchly pokles, preto je hladký.'}
-            {activePreset === 'sine' && 'Čistý sínus = jediná harmonická zložka.'}
-            {activePreset === null &&
-              'Pohybuj slidermi a sleduj, ako sa zložky (tenké) skladajú do výsledku (oranžová).'}
-          </Caption>
-        </div>
+          <Legend
+            items={[
+              { color: C.phosphor, label: 'výsledný súčet' },
+              ...(showParts ? [{ color: C.cyan, label: 'jednotlivé harmonické' }] : []),
+            ]}
+          />
+          {preset === 'square' && overshoot !== null && (
+            <Caption>
+              <strong className="text-amberb">Gibbsov jav:</strong> pri skoku syntéza „prestrelí“
+              o {overshoot.toFixed(1)} % — a nezmizne ani s viac harmonickými (teoreticky ~8,9 %),
+              len sa zúži k hrane. Posuň slider počtu harmonických a sleduj rožky.
+            </Caption>
+          )}
+          {preset === 'sawtooth' && (
+            <Caption>Sawtooth = všetky harmonické s amplitúdou 2/(πn) a striedavým znamienkom.</Caption>
+          )}
+          {preset === 'triangle' && (
+            <Caption>Triangle = nepárne harmonické s amplitúdou 8/(π²n²) — klesajú rýchlo, preto je hladký.</Caption>
+          )}
+        </Panel>
 
-        {/* Ovládanie harmonických */}
-        <div className="card flex flex-col p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">
-              Harmonické zložky ({harmonics.length})
-            </h3>
-            <button className="btn" onClick={addHarmonic} disabled={harmonics.length >= 8}>
-              + pridať
+        <div className="space-y-4">
+          <Panel title="Spektrum súčtu · |X[k]|">
+            <div className="crt h-32">
+              <Canvas
+                ariaLabel="Spektrum syntetizovaného signálu"
+                draw={(p) => {
+                  clear(p)
+                  grid(p, { rows: 3 })
+                  bars(p, spec, { color: C.cyan })
+                }}
+                deps={[spec]}
+              />
+            </div>
+            <Caption>Každá zložka = jeden peak. Amplitúdy kopírujú Fourierove koeficienty.</Caption>
+          </Panel>
+
+          <Panel title="Ručné ladenie" led={preset ? 'off' : 'busy'}>
+            <div className="max-h-56 space-y-3 overflow-y-auto pr-1">
+              {harmonics.slice(0, 6).map((h, i) => (
+                <div key={h.id} className="rounded border border-scope-600/50 bg-scope-900/60 p-2.5">
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="legend-dot" style={{ background: SERIES[i % SERIES.length] }} />
+                      n = {h.freq}
+                    </span>
+                    <button
+                      className="text-slate-600 hover:text-accent"
+                      onClick={() => {
+                        setPreset(null)
+                        setHarmonics((hs) => hs.filter((x) => x.id !== h.id))
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Slider label="f (cykly/okno)" value={h.freq} min={1} max={20} step={1} onChange={(v) => update(h.id, { freq: v })} format={(v) => `${v}`} />
+                    <Slider label="Amplitúda" value={h.amp} min={-1} max={1} onChange={(v) => update(h.id, { amp: v })} />
+                    <Slider label="Fáza" value={h.phase} min={-Math.PI} max={Math.PI} onChange={(v) => update(h.id, { phase: v })} unit="rad" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              className="btn mt-3 w-full"
+              disabled={harmonics.length >= 6}
+              onClick={() => {
+                setPreset(null)
+                setHarmonics((hs) => [...hs, { id: nextId++, freq: hs.length + 1, amp: 0.3, phase: 0 }])
+              }}
+            >
+              + pridať zložku
             </button>
-          </div>
-
-          <div className="flex-1 space-y-3 overflow-y-auto pr-1" style={{ maxHeight: 320 }}>
-            {harmonics.map((h, i) => (
-              <div key={h.id} className="rounded-lg border border-ink-600/60 bg-ink-700/30 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
-                    <span
-                      className="legend-dot"
-                      style={{ backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length] }}
-                    />
-                    Zložka #{i + 1}
-                  </span>
-                  <button
-                    className="text-xs text-slate-500 hover:text-accent"
-                    onClick={() => removeHarmonic(h.id)}
-                    aria-label="Odstrániť zložku"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 gap-2">
-                  <Slider
-                    label="Frekvencia (cykly/okno)"
-                    value={h.frequency}
-                    min={1}
-                    max={20}
-                    step={1}
-                    onChange={(v) => update(h.id, { frequency: v })}
-                    format={(v) => `${v.toFixed(0)}`}
-                  />
-                  <Slider
-                    label="Amplitúda"
-                    value={h.amplitude}
-                    min={-1}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => update(h.id, { amplitude: v })}
-                  />
-                  <Slider
-                    label="Fáza (rad)"
-                    value={h.phase}
-                    min={-Math.PI}
-                    max={Math.PI}
-                    step={0.01}
-                    onChange={(v) => update(h.id, { phase: v })}
-                    format={(v) => `${v.toFixed(2)}`}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+          </Panel>
         </div>
       </div>
 
-      <div className="card p-4 text-sm leading-relaxed text-slate-300">
-        <p>
-          Matematicky je každá zložka{' '}
-          <InlineMath math="A_n \sin(2\pi f_n t + \varphi_n)" /> a výsledok je ich súčet{' '}
-          <InlineMath math="x(t) = \sum_n A_n \sin(2\pi f_n t + \varphi_n)" />. FFT robí presný{' '}
-          <em>opak</em>: zo signálu <InlineMath math="x" /> zistí, ktoré frekvencie{' '}
-          <InlineMath math="f_n" />, s akými amplitúdami <InlineMath math="A_n" /> a fázami{' '}
-          <InlineMath math="\varphi_n" /> v ňom sú.
-        </p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Readout label="Zložky" value={String(harmonics.length)} />
+        <Readout label="Preset" value={preset ?? 'manual'} tone="accent" />
+        <Readout label="Gibbs overshoot" value={overshoot === null ? '—' : `${overshoot.toFixed(1)} %`} tone="amber" />
+        <Readout label="Teória" value="~8.9 %" tone="muted" />
+      </div>
+
+      <div className="panel p-4 text-sm leading-relaxed text-slate-300">
+        Každá zložka je <InlineMath math="A_n \sin(2\pi f_n t + \varphi_n)" />; súčet{' '}
+        <InlineMath math="x(t)=\sum_n A_n\sin(2\pi f_n t+\varphi_n)" />. DFT/FFT nájde k danému{' '}
+        <InlineMath math="x" /> práve tieto <InlineMath math="A_n" /> a <InlineMath math="\varphi_n" /> —
+        je to inverzná úloha k tomu, čo si práve robil rukami.
       </div>
     </Section>
   )

@@ -1,75 +1,125 @@
-import { useMemo, useState } from 'react'
-import { Section, LegendItem } from '../components/ui/Section'
-import { Slider } from '../components/ui/Slider'
+import { useMemo, useRef, useState } from 'react'
+import { BlockMath } from 'react-katex'
 import { Canvas } from '../components/Canvas'
-import { clear, drawGrid, drawLine, drawDot, COLORS, type Plot } from '../lib/draw'
-import { BlockMath, InlineMath } from 'react-katex'
+import { Panel, Section, Slider, Legend, Caption, Readout } from '../components/ui'
+import { clear, grid, trace, dot, C, type Plot, setupCanvas } from '../lib/draw'
+import { useAnimationFrame } from '../hooks/useAnimationFrame'
+import { useReducedMotion } from '../hooks/useReducedMotion'
 
-const DENSE = 1000 // „spojitý“ priebeh
+const DENSE = 900
 
-/** Aliasovaná frekvencia, ktorú podvzorkovanie predstiera. */
-function aliasFrequency(f: number, fs: number): number {
-  // poskladaj do pásma [0, fs/2]
+/** Aliasovaná frekvencia po zložení do [0, fs/2]. */
+function aliasFreq(f: number, fs: number): number {
   let a = f % fs
   if (a > fs / 2) a = fs - a
   return Math.abs(a)
 }
 
-/**
- * Sekcia 3 — Sampling & aliasing (P2).
- * Slider pre signálovú frekvenciu a vzorkovaciu frekvenciu. Pri podvzorkovaní
- * (fs < 2·f) vidíš, ako vzorky sadnú na úplne inú (alias) sínusovku.
- */
+/** CH03 — sampling, Nyquist, aliasing + wagon-wheel efekt. */
 export function SamplingSection() {
-  const [sigFreq, setSigFreq] = useState(5)
+  const [f, setF] = useState(6)
   const [fs, setFs] = useState(20)
+  const [wheelHz, setWheelHz] = useState(0.8) // otáčky kolesa za 1 "sekundu" animácie
+  const [strobeHz, setStrobeHz] = useState(10) // vzorkovanie kolesa (fps stroboskopu)
+  const reduced = useReducedMotion()
+  // autoplay len ak systém nemá obmedzenie pohybu
+  const [spin, setSpin] = useState(
+    () => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  )
 
-  const nyquist = fs / 2
-  const aliased = sigFreq > nyquist
-  const aliasF = useMemo(() => aliasFrequency(sigFreq, fs), [sigFreq, fs])
+  const nyq = fs / 2
+  const aliased = f > nyq
+  const fAlias = useMemo(() => aliasFreq(f, fs), [f, fs])
 
-  // spojitý originál
   const dense = useMemo(() => {
     const s = new Float64Array(DENSE)
-    for (let n = 0; n < DENSE; n++) s[n] = Math.sin(2 * Math.PI * sigFreq * (n / DENSE))
+    for (let n = 0; n < DENSE; n++) s[n] = Math.sin(2 * Math.PI * f * (n / DENSE))
     return s
-  }, [sigFreq])
-
-  // alias rekonštrukcia (čo „uvidíš“ z podvzorkovania)
+  }, [f])
   const aliasDense = useMemo(() => {
     const s = new Float64Array(DENSE)
-    for (let n = 0; n < DENSE; n++) s[n] = Math.sin(2 * Math.PI * aliasF * (n / DENSE))
+    for (let n = 0; n < DENSE; n++) s[n] = Math.sin(2 * Math.PI * fAlias * (n / DENSE))
     return s
-  }, [aliasF])
-
-  // vzorky pri fs (jedno okno t ∈ [0,1))
+  }, [fAlias])
   const samples = useMemo(() => {
-    const count = Math.max(2, Math.round(fs))
     const xs: number[] = []
     const ys: number[] = []
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < fs; i++) {
       const t = i / fs
-      if (t >= 1) break
       xs.push(t)
-      ys.push(Math.sin(2 * Math.PI * sigFreq * t))
+      ys.push(Math.sin(2 * Math.PI * f * t))
     }
     return { xs, ys }
-  }, [sigFreq, fs])
+  }, [f, fs])
+
+  /* ---- wagon wheel: skutočné koleso vs. koleso videné stroboskopom ---- */
+  const wheelReal = useRef<HTMLCanvasElement>(null)
+  const wheelSeen = useRef<HTMLCanvasElement>(null)
+  const angleReal = useRef(0)
+  const angleSeen = useRef(0)
+  const strobeAcc = useRef(0)
+
+  const drawWheel = (canvas: HTMLCanvasElement | null, angle: number, color: string) => {
+    if (!canvas) return
+    const p = setupCanvas(canvas)
+    if (!p) return
+    clear(p)
+    const cx = p.width / 2
+    const cy = p.height / 2
+    const R = Math.min(cx, cy) - 8
+    const { ctx } = p
+    ctx.strokeStyle = C.gridStrong
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(cx, cy, R, 0, 2 * Math.PI)
+    ctx.stroke()
+    // 8 spíc; jedna zvýraznená, aby bolo vidno smer otáčania
+    for (let i = 0; i < 8; i++) {
+      const a = angle + (i * Math.PI) / 4
+      ctx.strokeStyle = i === 0 ? color : C.muted
+      ctx.lineWidth = i === 0 ? 3 : 1.5
+      if (i === 0) {
+        ctx.shadowColor = color
+        ctx.shadowBlur = 8
+      }
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a))
+      ctx.stroke()
+      ctx.shadowBlur = 0
+    }
+    dot(p, cx, cy, 4, color, true)
+  }
+
+  useAnimationFrame((dt) => {
+    angleReal.current += 2 * Math.PI * wheelHz * dt
+    strobeAcc.current += dt
+    const period = 1 / strobeHz
+    while (strobeAcc.current >= period) {
+      strobeAcc.current -= period
+      // stroboskop "odfotí" skutočný uhol — to je vzorkovanie
+      angleSeen.current = angleReal.current
+    }
+    drawWheel(wheelReal.current, angleReal.current, C.phosphor)
+    drawWheel(wheelSeen.current, angleSeen.current, C.accent)
+  }, spin && !reduced)
+
+  // vnímaná rýchlosť kolesa (aliasing rotácie): zlož wheelHz do [-strobe/2, strobe/2]
+  const perceived = useMemo(() => {
+    let a = wheelHz % strobeHz
+    if (a > strobeHz / 2) a -= strobeHz
+    return a
+  }, [wheelHz, strobeHz])
 
   const drawScene = (p: Plot) => {
     clear(p)
-    drawGrid(p, { centerLine: true })
-    // originálny signál
-    drawLine(p, dense, { color: COLORS.muted, lineWidth: 1.2, yMin: -1.3, yMax: 1.3 })
-    // alias (ak nastáva)
-    if (aliased) {
-      drawLine(p, aliasDense, { color: COLORS.accent, lineWidth: 2, glow: true, yMin: -1.3, yMax: 1.3 })
-    }
-    // vzorky ako body
-    const toX = (t: number) => t * p.width
-    const toY = (v: number) => p.height / 2 - (v / 1.3) * (p.height / 2 - 6)
+    grid(p, { centerLine: true })
+    trace(p, dense, { color: C.muted, lineWidth: 1.2, yMin: -1.3, yMax: 1.3 })
+    if (aliased) trace(p, aliasDense, { color: C.accent, lineWidth: 2.2, glow: true, yMin: -1.3, yMax: 1.3 })
     for (let i = 0; i < samples.xs.length; i++) {
-      drawDot(p, toX(samples.xs[i]), toY(samples.ys[i]), 4, COLORS.cyan, true)
+      const x = samples.xs[i] * p.width
+      const y = p.height / 2 - (samples.ys[i] / 1.3) * (p.height / 2 - 5)
+      dot(p, x, y, 4, C.cyan, true)
     }
   }
 
@@ -77,61 +127,79 @@ export function SamplingSection() {
     <Section
       id="sampling"
       index={3}
-      title="Od spojitej k diskrétnej: sampling a aliasing"
-      subtitle="Počítač nevidí spojitý signál — len vzorky odobrané rýchlosťou f_s. Ak vzorkuješ príliš pomaly, vysoká frekvencia sa zamaskuje za nízku. To je aliasing a Nyquistova veta hovorí, kde je hranica."
+      title="Sampling: zo spojitého sveta do vzoriek"
+      lead="Počítač signál nevidí — vidí len vzorky odobrané frekvenciou f_s. Nyquistova–Shannonova veta hovorí, kedy vzorky signál verne nesú: f_s > 2·f_max. Pod hranicou vznikne alias — falošná nižšia frekvencia, na ktorú vzorky sadnú rovnako dobre."
     >
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="card p-4">
-          <Slider label="Frekvencia signálu f" value={sigFreq} min={1} max={30} step={0.5} onChange={setSigFreq} format={(v) => `${v.toFixed(1)} cyklov`} />
-        </div>
-        <div className="card p-4">
-          <Slider label="Vzorkovacia frekvencia f_s" value={fs} min={4} max={60} step={1} onChange={setFs} format={(v) => `${v.toFixed(0)} vzoriek`} />
-        </div>
+        <Panel title="Signál f">
+          <Slider label="Frekvencia signálu" value={f} min={1} max={30} step={0.5} onChange={setF} format={(v) => v.toFixed(1)} unit="cyklov" />
+        </Panel>
+        <Panel title="Vzorkovanie f_s">
+          <Slider label="Vzorkovacia frekvencia" value={fs} min={4} max={60} step={1} onChange={setFs} format={(v) => v.toFixed(0)} unit="vz./okno" />
+        </Panel>
       </div>
 
-      <div className="card p-4">
-        <div className="lab-canvas h-64">
-          <Canvas ariaLabel="Originálny signál, jeho vzorky a prípadný alias" draw={drawScene} deps={[dense, aliasDense, samples, aliased]} />
+      <Panel title="Osciloskop · signál, vzorky a alias" led={aliased ? 'busy' : 'on'}>
+        <div className="crt h-60">
+          <Canvas ariaLabel="Signál, jeho vzorky a aliasovaná rekonštrukcia" draw={drawScene} deps={[dense, aliasDense, samples, aliased]} />
         </div>
-        <div className="mt-2 flex flex-wrap gap-4">
-          <LegendItem color={COLORS.muted}>skutočný signál (f = {sigFreq})</LegendItem>
-          <LegendItem color={COLORS.cyan}>odobrané vzorky (f_s = {fs})</LegendItem>
-          {aliased && <LegendItem color={COLORS.accent}>alias — falošná frekvencia {aliasF.toFixed(1)}</LegendItem>}
-        </div>
+        <Legend
+          items={[
+            { color: C.muted, label: `skutočný signál (f = ${f})` },
+            { color: C.cyan, label: `vzorky (f_s = ${fs})` },
+            ...(aliased ? [{ color: C.accent, label: `alias → f = ${fAlias.toFixed(1)}` }] : []),
+          ]}
+        />
+      </Panel>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Readout label="Nyquist f_s/2" value={nyq.toFixed(1)} tone="cyan" />
+        <Readout label="Stav" value={aliased ? 'ALIASING' : 'OK'} tone={aliased ? 'accent' : 'phosphor'} />
+        <Readout label="FFT uvidí" value={fAlias.toFixed(1)} tone={aliased ? 'accent' : 'muted'} />
+        <Readout label="Podmienka" value="fs > 2·f" tone="muted" />
       </div>
 
-      <div className={`card p-5 ${aliased ? 'border-accent/50 shadow-glow' : 'border-cyan/30'}`}>
-        <div className="grid gap-4 sm:grid-cols-3">
+      <Panel
+        title="Wagon-wheel efekt · aliasing v rotácii"
+        led={spin && !reduced ? 'busy' : 'off'}
+        right={
+          <button className="btn px-2 py-1" onClick={() => setSpin((s) => !s)}>
+            {spin ? '⏸ stop' : '▶ štart'}
+          </button>
+        }
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Nyquistova hranica</div>
-            <div className="font-mono text-xl text-cyan">{nyquist.toFixed(1)}</div>
-            <div className="text-xs text-slate-500">f_s / 2</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Stav</div>
-            <div className="font-mono text-xl" style={{ color: aliased ? COLORS.accent : COLORS.cyan }}>
-              {aliased ? 'ALIASING' : 'OK'}
+            <div className="crt aspect-square max-h-56 w-full">
+              <canvas ref={wheelReal} style={{ width: '100%', height: '100%', display: 'block' }} role="img" aria-label="Skutočne rotujúce koleso" />
             </div>
-            <div className="text-xs text-slate-500">{aliased ? 'f > f_s/2' : 'f ≤ f_s/2'}</div>
+            <Legend items={[{ color: C.phosphor, label: `skutočné koleso · ${wheelHz.toFixed(1)} ot/s` }]} />
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-500">Vnímaná frekvencia</div>
-            <div className="font-mono text-xl" style={{ color: aliased ? COLORS.accent : COLORS.muted }}>
-              {aliasF.toFixed(1)}
+            <div className="crt aspect-square max-h-56 w-full">
+              <canvas ref={wheelSeen} style={{ width: '100%', height: '100%', display: 'block' }} role="img" aria-label="Koleso videné stroboskopom" />
             </div>
-            <div className="text-xs text-slate-500">čo „uvidí“ FFT</div>
+            <Legend items={[{ color: C.accent, label: `cez stroboskop · vníma sa ${perceived.toFixed(2)} ot/s` }]} />
           </div>
         </div>
-      </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Slider label="Otáčky kolesa" value={wheelHz} min={0.1} max={16} step={0.1} onChange={setWheelHz} unit="ot/s" format={(v) => v.toFixed(1)} />
+          <Slider label="Stroboskop (vzorkovanie)" value={strobeHz} min={2} max={24} step={0.5} onChange={setStrobeHz} unit="fps" format={(v) => v.toFixed(1)} />
+        </div>
+        <Caption>
+          Presne ako kolesá dostavníka vo westerne: kamera vzorkuje 24× za sekundu, a keď sa
+          koleso točí rýchlejšie než polovica snímkovej frekvencie, zdá sa, že sa točí pomaly,
+          stojí, či dokonca ide dozadu (záporná vnímaná rýchlosť = alias).
+          {reduced && ' (Animácia je pozastavená — systém má zapnuté obmedzenie pohybu.)'}
+        </Caption>
+      </Panel>
 
-      <div className="card p-5">
-        <BlockMath math="f_s > 2\, f_{\max} \quad\text{(Nyquist–Shannon)}" />
+      <div className="panel p-4">
+        <BlockMath math="f_s > 2\,f_{\max}\quad\text{(Nyquist–Shannon)},\qquad \Delta f = \frac{f_s}{N}" />
         <p className="text-sm leading-relaxed text-slate-400">
-          Aby sa frekvencia <InlineMath math="f" /> dala verne zaznamenať, musí byť vzorkovacia
-          frekvencia aspoň dvojnásobok najvyššej frekvencie v signáli. Inak sa zložky nad{' '}
-          <InlineMath math="f_s/2" /> „preklopia“ späť do pásma a objavia sa ako nižšie frekvencie —
-          presne to vidíš vyššie, keď posunieš f nad Nyquist. Preto majú reálne A/D prevodníky pred
-          sebou anti-aliasingový filter.
+          Zložky nad f_s/2 sa „preklopia“ späť do pásma — preto majú A/D prevodníky
+          anti-aliasing filter pred vzorkovačom. Druhý vzťah: N vzoriek pri f_s dáva frekvenčné
+          rozlíšenie Δf = f_s/N — dlhší záznam = jemnejšie spektrum.
         </p>
       </div>
     </Section>

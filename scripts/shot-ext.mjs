@@ -2,14 +2,14 @@ import { chromium } from 'playwright'
 
 const ids = process.argv.slice(2)
 const out = '/tmp/claude-0/-home-user-FFT/562581ab-127c-5691-91de-daff2cfb7086/scratchpad'
-const browser = await chromium.launch()
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 const page = await browser.newPage({ viewport: { width: 1360, height: 940 } })
 const errors = []
 page.on('console', (m) => {
   if (m.type() === 'error' && !m.text().includes('ERR_CERT')) errors.push(m.text())
 })
 page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message))
-await page.goto('http://localhost:4200/', { waitUntil: 'networkidle' })
+await page.goto('http://localhost:4300/', { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 for (const id of ids) {
   await page.evaluate((i) => document.getElementById(i)?.scrollIntoView(), id)

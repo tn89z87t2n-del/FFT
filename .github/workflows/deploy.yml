@@ -25,25 +25,31 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            extended/package-lock.json
+            simple/package-lock.json
 
-      # v1 (koreň) → site/
+      # Hlavná verzia (FFT LAB v2, koreň) → site/
       - run: npm ci
-      - run: npm run build
-
-      # Extended v2 → site/extended/
-      - run: npm ci
-        working-directory: extended
       - run: npm test
-        working-directory: extended
       - run: npm run build
-        working-directory: extended
+
+      # Simple v1 → site/simple/
+      - run: npm ci
+        working-directory: simple
+      - run: npm run build
+        working-directory: simple
 
       - name: Zostav výsledný web
         run: |
-          mkdir -p site/extended
+          mkdir -p site/simple site/extended
           cp -r dist/* site/
-          cp -r extended/dist/* site/extended/
+          cp -r simple/dist/* site/simple/
+          # presmerovanie starej URL /extended/ na koreň
+          cat > site/extended/index.html <<'HTML'
+          <!doctype html><html lang="sk"><head><meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=../">
+          <link rel="canonical" href="../"><title>FFT LAB</title></head>
+          <body><p>Stránka sa presunula — <a href="../">pokračuj sem</a>.</p></body></html>
+          HTML
           touch site/.nojekyll
 
       - name: Push na gh-pages

@@ -1,11 +1,8 @@
 # --- Build stage ---
 FROM node:22-alpine AS build
 WORKDIR /app
-
-# Najprv len manifesty → lepšie cache-ovanie závislostí
 COPY package.json package-lock.json* ./
 RUN npm ci || npm install
-
 COPY . .
 RUN npm run build
 

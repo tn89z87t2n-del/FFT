@@ -1,244 +1,204 @@
 import { useMemo, useState } from 'react'
-import { Section, Caption, LegendItem } from '../components/ui/Section'
-import { Slider } from '../components/ui/Slider'
-import { Canvas } from '../components/Canvas'
-import { clear, drawGrid, drawLine, drawDot, COLORS, type Plot } from '../lib/draw'
 import { InlineMath } from 'react-katex'
+import { Canvas } from '../components/Canvas'
+import { Panel, Section, Slider, Legend, Caption, Readout } from '../components/ui'
+import { clear, grid, trace, dot, vMarker, C, type Plot } from '../lib/draw'
+import { useAnimationFrame } from '../hooks/useAnimationFrame'
+import { useReducedMotion } from '../hooks/useReducedMotion'
 
-const N = 500 // počet bodov signálu (hustota namotávania)
-const F_MAX = 12 // max winding frekvencia
+const N = 600
+const F_MAX = 12
 
-/** Demo signál: jeden alebo dva tóny, ktoré sa dajú „nájsť“ namotávaním. */
-function makeSignal(f1: number, f2: number, twoTones: boolean): Float64Array {
+function makeSignal(f1: number, f2: number, two: boolean): Float64Array {
   const s = new Float64Array(N)
   for (let n = 0; n < N; n++) {
     const t = n / N
-    // posunutý do kladných hodnôt (baseline 1) — pekné namotávanie ako u 3b1b
-    s[n] = 1 + Math.cos(2 * Math.PI * f1 * t) + (twoTones ? Math.cos(2 * Math.PI * f2 * t) : 0)
+    // baseline 1 → krivka sa navíja okolo kružnice (3b1b štýl)
+    s[n] = 1 + Math.cos(2 * Math.PI * f1 * t) + (two ? Math.cos(2 * Math.PI * f2 * t) : 0)
   }
   return s
 }
 
-/** Magnitúda „ťažiska“ pri danej winding frekvencii f (skoro-Fourierova transformácia). */
-function centerOfMass(signal: Float64Array, f: number): { re: number; im: number } {
+/** Ťažisko navinutého signálu pri frekvencii navíjania f — v podstate DFT bin. */
+function centroid(sig: Float64Array, f: number): { re: number; im: number } {
   let re = 0
   let im = 0
   for (let n = 0; n < N; n++) {
-    const t = n / N
-    const angle = -2 * Math.PI * f * t
-    re += signal[n] * Math.cos(angle)
-    im += signal[n] * Math.sin(angle)
+    const a = (-2 * Math.PI * f * n) / N
+    re += sig[n] * Math.cos(a)
+    im += sig[n] * Math.sin(a)
   }
   return { re: re / N, im: im / N }
 }
 
-/**
- * Sekcia 5 — Winding machine (P1, kľúčový intuition-builder).
- * Namotáme signál na kružnicu pri nastaviteľnej winding frekvencii.
- * Keď sa winding frekvencia zhoduje s frekvenciou v signáli, ťažisko sa
- * vychýli od počiatku → vznikne peak v „transformačnom“ grafe dole.
- */
+/** CH05 — winding machine (kľúčová intuícia DFT). */
 export function WindingSection() {
-  const [windFreq, setWindFreq] = useState(1)
+  const [fw, setFw] = useState(1)
   const [f1, setF1] = useState(3)
   const [f2, setF2] = useState(7)
-  const [twoTones, setTwoTones] = useState(false)
+  const [two, setTwo] = useState(true)
+  const [sweep, setSweep] = useState(false)
+  const reduced = useReducedMotion()
 
-  const signal = useMemo(() => makeSignal(f1, f2, twoTones), [f1, f2, twoTones])
+  const sig = useMemo(() => makeSignal(f1, f2, two), [f1, f2, two])
 
-  // Body namotané na kružnicu pri aktuálnej winding frekvencii
+  // auto-sweep frekvencie navíjania (vypnutý pri reduced motion)
+  useAnimationFrame((dt) => {
+    setFw((v) => {
+      const nv = v + dt * 0.8
+      return nv > F_MAX ? 0 : nv
+    })
+  }, sweep && !reduced)
+
   const wound = useMemo(() => {
     const xs = new Float64Array(N)
     const ys = new Float64Array(N)
     for (let n = 0; n < N; n++) {
-      const t = n / N
-      const angle = -2 * Math.PI * windFreq * t
-      xs[n] = signal[n] * Math.cos(angle)
-      ys[n] = signal[n] * Math.sin(angle)
+      const a = (-2 * Math.PI * fw * n) / N
+      xs[n] = sig[n] * Math.cos(a)
+      ys[n] = sig[n] * Math.sin(a)
     }
     return { xs, ys }
-  }, [signal, windFreq])
+  }, [sig, fw])
 
-  const com = useMemo(() => centerOfMass(signal, windFreq), [signal, windFreq])
+  const com = useMemo(() => centroid(sig, fw), [sig, fw])
   const comMag = Math.hypot(com.re, com.im)
 
-  // Priebeh magnitúdy ťažiska cez celý rozsah winding frekvencií
   const transform = useMemo(() => {
-    const STEPS = 480
-    const out = new Float64Array(STEPS)
-    for (let i = 0; i < STEPS; i++) {
-      const f = (i / (STEPS - 1)) * F_MAX
-      const c = centerOfMass(signal, f)
+    const S = 420
+    const out = new Float64Array(S)
+    for (let i = 0; i < S; i++) {
+      const c = centroid(sig, (i / (S - 1)) * F_MAX)
       out[i] = Math.hypot(c.re, c.im)
     }
     return out
-  }, [signal])
+  }, [sig])
+  const tMax = useMemo(() => Math.max(0.6, ...transform) * 1.1, [transform])
 
-  // Vykreslenie namotaného grafu (origin v strede, pevná mierka)
   const drawWound = (p: Plot) => {
     clear(p)
     const cx = p.width / 2
     const cy = p.height / 2
-    const scale = Math.min(p.width, p.height) / 2 / 3.2 // signál max ~3
+    const R = Math.min(cx, cy) / 3.2
     const { ctx } = p
-
-    // krížové osi cez stred
-    ctx.strokeStyle = COLORS.grid
-    ctx.lineWidth = 1
+    ctx.strokeStyle = C.grid
     ctx.beginPath()
     ctx.moveTo(cx, 0); ctx.lineTo(cx, p.height)
     ctx.moveTo(0, cy); ctx.lineTo(p.width, cy)
     ctx.stroke()
-    // referenčná kružnica (baseline 1)
-    ctx.strokeStyle = COLORS.gridStrong
+    ctx.strokeStyle = C.gridStrong
     ctx.beginPath()
-    ctx.arc(cx, cy, scale, 0, 2 * Math.PI)
+    ctx.arc(cx, cy, R, 0, 2 * Math.PI)
     ctx.stroke()
 
-    // namotaná krivka
-    ctx.strokeStyle = COLORS.cyan
-    ctx.lineWidth = 1.4
+    ctx.strokeStyle = C.phosphor
+    ctx.lineWidth = 1.3
     ctx.lineJoin = 'round'
+    ctx.shadowColor = C.phosphor
+    ctx.shadowBlur = 4
     ctx.beginPath()
     for (let n = 0; n < N; n++) {
-      const x = cx + wound.xs[n] * scale
-      const y = cy - wound.ys[n] * scale
+      const x = cx + wound.xs[n] * R
+      const y = cy - wound.ys[n] * R
       if (n === 0) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
     }
     ctx.stroke()
+    ctx.shadowBlur = 0
 
-    // čiara od počiatku k ťažisku
-    const comX = cx + com.re * scale
-    const comY = cy - com.im * scale
-    ctx.strokeStyle = COLORS.accent
-    ctx.lineWidth = 1.5
+    const px = cx + com.re * R
+    const py = cy - com.im * R
+    ctx.strokeStyle = C.accent
     ctx.setLineDash([4, 3])
-    ctx.beginPath()
-    ctx.moveTo(cx, cy)
-    ctx.lineTo(comX, comY)
-    ctx.stroke()
+    ctx.lineWidth = 1.6
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(px, py); ctx.stroke()
     ctx.setLineDash([])
-
-    // ťažisko
-    drawDot(p, comX, comY, 6, COLORS.accent, true)
-    drawDot(p, cx, cy, 2.5, COLORS.muted)
+    dot(p, px, py, 6, C.accent, true)
+    dot(p, cx, cy, 2.5, C.muted)
   }
-
-  // Pozícia markera aktuálnej winding frekvencie v transform grafe
-  const markerX = windFreq / F_MAX
 
   return (
     <Section
       id="winding"
       index={5}
-      title="Intuícia DFT: „winding machine“"
-      subtitle="Predstav si, že signál namotáš na kružnicu — rýchlosť namotávania je winding frekvencia. Pri väčšine frekvencií sa body rozprestrú rovnomerne a ich ťažisko ostane blízko stredu. Ale keď winding frekvencia trafí frekvenciu v signáli, ťažisko sa prudko vychýli. To je presne peak v spektre."
+      title="Winding machine: DFT ako navíjanie na kružnicu"
+      lead="Namotaj graf signálu okolo počiatku komplexnej roviny rýchlosťou f otáčok na okno — presne to robí násobenie e^{-j2πft}. Pri väčšine frekvencií sa krivka rozloží symetricky a jej ťažisko zostane pri nule. Keď ale frekvencia navíjania trafí frekvenciu v signáli, všetky vrcholy sa zosypú na jednu stranu a ťažisko vystrelí — to je peak v spektre."
     >
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="card p-4">
-          <div className="mb-2 text-sm font-medium text-slate-300">
-            Signál namotaný na kružnicu
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Panel title="Komplexná rovina · navinutý signál" led={sweep ? 'busy' : 'on'}>
+          <div className="crt aspect-square w-full">
+            <Canvas ariaLabel="Signál navinutý na kružnicu s ťažiskom" draw={drawWound} deps={[wound, com]} />
           </div>
-          <div className="lab-canvas aspect-square w-full">
-            <Canvas
-              ariaLabel="Signál namotaný okolo počiatku pri danej winding frekvencii"
-              draw={drawWound}
-              deps={[wound, com]}
-            />
-          </div>
-          <div className="mt-2 flex flex-wrap gap-4">
-            <LegendItem color={COLORS.cyan}>namotaný signál</LegendItem>
-            <LegendItem color={COLORS.accent}>ťažisko bodov</LegendItem>
-          </div>
-        </div>
+          <Legend
+            items={[
+              { color: C.phosphor, label: 'navinutý signál x(t)·e^{-j2πft}' },
+              { color: C.accent, label: 'ťažisko (≈ hodnota DFT binu)' },
+            ]}
+          />
+        </Panel>
 
-        <div className="flex flex-col gap-4">
-          <div className="card p-4">
-            <Slider
-              label="Winding frekvencia (otáčky / okno)"
-              value={windFreq}
-              min={0}
-              max={F_MAX}
-              step={0.01}
-              onChange={setWindFreq}
-              format={(v) => `${v.toFixed(2)}`}
-            />
-            <div className="mt-3 grid grid-cols-2 gap-3 text-center">
-              <div className="rounded-lg border border-ink-600/60 bg-ink-700/30 p-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  |ťažisko|
-                </div>
-                <div className="font-mono text-lg text-accent">{comMag.toFixed(3)}</div>
-              </div>
-              <div className="rounded-lg border border-ink-600/60 bg-ink-700/30 p-2">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  Frekvencie v signáli
-                </div>
-                <div className="font-mono text-lg text-cyan">
-                  {f1}{twoTones ? `, ${f2}` : ''}
-                </div>
-              </div>
+        <div className="space-y-4">
+          <Panel
+            title="Riadenie navíjania"
+            right={
+              <button className="btn px-2 py-1" onClick={() => setSweep((s) => !s)}>
+                {sweep ? '⏸ sweep' : '▶ sweep'}
+              </button>
+            }
+          >
+            <Slider label="Frekvencia navíjania f" value={fw} min={0} max={F_MAX} step={0.01} onChange={(v) => { setSweep(false); setFw(v) }} format={(v) => v.toFixed(2)} unit="ot/okno" />
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Readout label="|ťažisko|" value={comMag.toFixed(3)} tone="accent" />
+              <Readout label="V signáli" value={two ? `${f1} + ${f2}` : String(f1)} tone="phosphor" />
             </div>
-          </div>
+            {reduced && sweep && (
+              <Caption>Sweep animácia je potlačená (prefers-reduced-motion).</Caption>
+            )}
+          </Panel>
 
-          <div className="card p-4">
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
-              <Slider label="Frekvencia tónu 1" value={f1} min={1} max={10} step={1} onChange={setF1} format={(v) => `${v}`} />
-              <Slider label="Frekvencia tónu 2" value={f2} min={1} max={10} step={1} onChange={setF2} format={(v) => `${v}`} />
+          <Panel title="Zloženie testovacieho signálu">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Slider label="Tón 1" value={f1} min={1} max={10} step={1} onChange={setF1} format={(v) => `${v}`} />
+              <Slider label="Tón 2" value={f2} min={1} max={10} step={1} onChange={setF2} format={(v) => `${v}`} />
             </div>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
-              <input type="checkbox" checked={twoTones} onChange={(e) => setTwoTones(e.target.checked)} className="accent-accent" />
-              Pridať druhý tón (uvidíš dva peaky)
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+              <input type="checkbox" checked={two} onChange={(e) => setTwo(e.target.checked)} className="accent-[#e8622c]" />
+              druhý tón zapnutý
             </label>
-          </div>
+          </Panel>
         </div>
       </div>
 
-      <div className="card p-4">
-        <div className="mb-2 text-sm font-medium text-slate-300">
-          Magnitúda ťažiska vs. winding frekvencia (= spektrum)
-        </div>
-        <div className="lab-canvas relative h-44">
+      <Panel title="|ťažisko| vs. frekvencia navíjania — vzniká spektrum">
+        <div className="crt h-44">
           <Canvas
-            ariaLabel="Graf magnitúdy ťažiska v závislosti od winding frekvencie s peakmi"
+            ariaLabel="Magnitúda ťažiska ako funkcia frekvencie navíjania"
             draw={(p) => {
               clear(p)
-              drawGrid(p, { rows: 3, cols: 12 })
-              drawLine(p, transform, { color: COLORS.amber, glow: true, yMin: 0, yMax: Math.max(0.6, ...transform) * 1.1 })
-              // marker aktuálnej winding frekvencie
-              const x = markerX * p.width
-              p.ctx.strokeStyle = COLORS.accent
-              p.ctx.lineWidth = 1.5
-              p.ctx.setLineDash([3, 3])
-              p.ctx.beginPath()
-              p.ctx.moveTo(x, 0)
-              p.ctx.lineTo(x, p.height)
-              p.ctx.stroke()
-              p.ctx.setLineDash([])
+              grid(p, { rows: 3, cols: 12 })
+              trace(p, transform, { color: C.amber, glow: true, yMin: 0, yMax: tMax })
+              vMarker(p, fw / F_MAX)
             }}
-            deps={[transform, markerX]}
+            deps={[transform, fw, tMax]}
           />
         </div>
-        <div className="mt-2 flex flex-wrap gap-4">
-          <LegendItem color={COLORS.amber}>|ťažisko| pre každú frekvenciu</LegendItem>
-          <LegendItem color={COLORS.accent}>aktuálna winding frekvencia</LegendItem>
-        </div>
+        <Legend
+          items={[
+            { color: C.amber, label: '|ťažisko|(f)' },
+            { color: C.accent, label: `aktuálne f = ${fw.toFixed(2)}` },
+          ]}
+        />
         <Caption>
-          Os x = winding frekvencia (0…{F_MAX}). Peaky sú presne pri frekvenciách prítomných v
-          signáli. Posúvaj slider „winding frekvencia“ a sleduj, ako prejazd cez peak roztiahne
-          ťažisko v ľavom grafe.
+          Peaky ležia presne na frekvenciách tónov v signáli. Pusti ▶ sweep a sleduj obidva
+          panely naraz — prechod cez peak roztiahne ťažisko v komplexnej rovine.
         </Caption>
-      </div>
+      </Panel>
 
-      <div className="card p-4 text-sm leading-relaxed text-slate-300">
-        <p>
-          Každý bod namotávame ako <InlineMath math="x[n]\,e^{-2\pi i f t}" />, ťažisko je ich
-          priemer. To je až na konštantu presne sčítanec DFT —{' '}
-          <InlineMath math="\frac{1}{N}\sum_n x[n]\,e^{-2\pi i f n/N}" />. Preto „winding machine“
-          nie je len analógia: <strong className="text-white">je to doslova DFT</strong>, len
-          nakreslená.
-        </p>
+      <div className="panel p-4 text-sm leading-relaxed text-slate-300">
+        Ťažisko je <InlineMath math="\tfrac{1}{N}\sum_n x[n]\,e^{-j2\pi f n/N}" /> — pre celočíselné{' '}
+        f je to až na faktor 1/N presne <InlineMath math="X[f]" />. Winding machine teda nie je
+        metafora, <strong className="text-white">je to DFT nakreslená geometricky</strong>: reálna
+        os ťažiska je korelácia s kosínusom, imaginárna so sínusom.
       </div>
     </Section>
   )

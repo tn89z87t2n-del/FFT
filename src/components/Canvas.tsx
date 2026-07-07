@@ -2,62 +2,58 @@ import { useEffect, useRef } from 'react'
 import { setupCanvas, type Plot } from '../lib/draw'
 
 interface CanvasProps {
-  /** Vykresľovacia funkcia. Dostane pripravený Plot (ctx + logické rozmery). */
   draw: (p: Plot) => void
-  /** Závislosti — pri ich zmene sa prekreslí. */
   deps?: unknown[]
   className?: string
-  /** Voliteľný onPointer handler — vráti relatívnu pozíciu v CSS px. */
-  onPointer?: (x: number, y: number, p: Plot, event: PointerEvent) => void
+  /** Pointer handler (x, y v CSS px). Funguje aj dotykom (pointer events). */
+  onPointer?: (x: number, y: number, p: Plot, e: PointerEvent) => void
   ariaLabel?: string
 }
 
 /**
- * Canvas — znovupoužiteľná komponenta. Rieši HiDPI setup, resize cez
- * ResizeObserver a prekreslenie pri zmene závislostí. Vďaka nej sa jednotlivé
- * vizualizácie sústredia len na samotné kreslenie.
+ * Znovupoužiteľný canvas: HiDPI, ResizeObserver, prekreslenie pri zmene deps,
+ * pointer events (myš aj dotyk). Sekcie riešia len samotné kreslenie.
  */
 export function Canvas({ draw, deps = [], className, onPointer, ariaLabel }: CanvasProps) {
   const ref = useRef<HTMLCanvasElement>(null)
   const drawRef = useRef(draw)
   drawRef.current = draw
 
-  // Prekreslenie pri zmene deps
   useEffect(() => {
-    const canvas = ref.current
-    if (!canvas) return
-    const p = setupCanvas(canvas)
+    const c = ref.current
+    if (!c) return
+    const p = setupCanvas(c)
     if (p) drawRef.current(p)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
 
-  // Resize observer — prekreslí pri zmene rozmerov kontajnera
   useEffect(() => {
-    const canvas = ref.current
-    if (!canvas) return
+    const c = ref.current
+    if (!c) return
     const ro = new ResizeObserver(() => {
-      const p = setupCanvas(canvas)
+      const p = setupCanvas(c)
       if (p) drawRef.current(p)
     })
-    ro.observe(canvas)
+    ro.observe(c)
     return () => ro.disconnect()
   }, [])
 
-  // Pointer interakcia
   useEffect(() => {
-    const canvas = ref.current
-    if (!canvas || !onPointer) return
+    const c = ref.current
+    if (!c || !onPointer) return
     const handler = (e: PointerEvent) => {
-      const p = setupCanvas(canvas)
+      const p = setupCanvas(c)
       if (!p) return
-      const rect = canvas.getBoundingClientRect()
-      onPointer(e.clientX - rect.left, e.clientY - rect.top, p, e)
+      const r = c.getBoundingClientRect()
+      onPointer(e.clientX - r.left, e.clientY - r.top, p, e)
     }
-    canvas.addEventListener('pointerdown', handler)
-    canvas.addEventListener('pointermove', handler)
+    c.addEventListener('pointerdown', handler)
+    c.addEventListener('pointermove', handler)
+    window.addEventListener('pointerup', handler)
     return () => {
-      canvas.removeEventListener('pointerdown', handler)
-      canvas.removeEventListener('pointermove', handler)
+      c.removeEventListener('pointerdown', handler)
+      c.removeEventListener('pointermove', handler)
+      window.removeEventListener('pointerup', handler)
     }
   }, [onPointer])
 
@@ -67,7 +63,7 @@ export function Canvas({ draw, deps = [], className, onPointer, ariaLabel }: Can
       className={className}
       role="img"
       aria-label={ariaLabel}
-      style={{ width: '100%', height: '100%', display: 'block' }}
+      style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
     />
   )
 }

@@ -11,107 +11,123 @@
     scroll-behavior: smooth;
   }
 
-  body {
-    @apply bg-ink-900 text-slate-200 font-sans antialiased;
-    background-image:
-      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 107, 53, 0.08), transparent),
-      radial-gradient(ellipse 60% 40% at 90% 10%, rgba(61, 214, 208, 0.05), transparent);
-    background-attachment: fixed;
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
-  /* Kotvy pri scrollovaní nesmú zmiznúť pod sticky navigáciou */
+  body {
+    @apply bg-scope-950 text-slate-300 font-sans antialiased;
+  }
+
   section[id] {
-    scroll-margin-top: 5rem;
+    scroll-margin-top: 4.5rem;
   }
 
   ::selection {
     @apply bg-accent/30 text-white;
   }
 
-  /* KaTeX – zladenie s tmavou témou */
-  .katex {
-    @apply text-slate-100;
-  }
-  .katex-display {
-    @apply my-4 overflow-x-auto overflow-y-hidden py-1;
-  }
+  .katex { @apply text-slate-100; }
+  .katex-display { @apply my-3 overflow-x-auto overflow-y-hidden py-1; }
 }
 
 @layer components {
-  .card {
-    @apply rounded-xl border border-ink-600/70 bg-ink-800/60 backdrop-blur-sm shadow-lg;
+  /* Panel meracieho prístroja: jemný bevel, tmavý povrch */
+  .panel {
+    @apply relative rounded-lg border border-scope-600/60 bg-scope-850 shadow-panel;
   }
 
-  .lab-canvas {
-    @apply rounded-lg border border-ink-600/70 bg-ink-850 overflow-hidden;
+  /* Hlavička panelu s LED indikátorom */
+  .panel-head {
+    @apply flex items-center gap-2 border-b border-scope-600/50 px-4 py-2.5
+           text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400;
   }
 
-  .pill {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-ink-600
-           bg-ink-700/60 px-3 py-1 text-xs font-medium text-slate-300;
+  /* Obrazovka osciloskopu vnútri panelu */
+  .crt {
+    @apply relative overflow-hidden rounded-md border border-scope-600/70;
+    background:
+      radial-gradient(ellipse 120% 90% at 50% 40%, rgba(47, 206, 104, 0.035), transparent 70%),
+      #07090c;
+  }
+
+  .led {
+    @apply inline-block h-2 w-2 shrink-0 rounded-full;
+  }
+  .led-on {
+    @apply bg-phosphor shadow-led-green;
+  }
+  .led-busy {
+    @apply bg-accent shadow-led-orange;
+  }
+  .led-off {
+    @apply bg-scope-500;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-600
-           bg-ink-700/70 px-3 py-1.5 text-sm font-medium text-slate-200
-           transition-colors hover:border-accent/60 hover:text-white
-           focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60;
+    @apply inline-flex items-center justify-center gap-1.5 rounded border border-scope-600
+           bg-scope-800 px-3 py-1.5 text-xs font-medium text-slate-300
+           transition-colors hover:border-accent/70 hover:text-white
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70
+           disabled:opacity-50;
+  }
+  .btn-active {
+    @apply border-accent bg-accent/15 text-white shadow-glow-accent;
   }
 
-  .btn-active {
-    @apply border-accent/70 bg-accent/15 text-white shadow-glow;
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-scope-600
+           bg-scope-800/80 px-3 py-1 text-[11px] font-medium text-slate-400;
   }
 
   .legend-dot {
     @apply inline-block h-2.5 w-2.5 rounded-full;
   }
+
+  .kbd {
+    @apply rounded border border-scope-600 bg-scope-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-300;
+  }
 }
 
-/* Vlastný štýl pre range slidery (oscilloscope feel) */
+/* Slidery — fader meracieho prístroja */
 input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(to right, #2a3342, #2a3342);
+  border-radius: 2px;
+  background: #243044;
   outline: none;
   cursor: pointer;
 }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #ff6b35;
-  border: 2px solid #0b0f16;
-  box-shadow: 0 0 8px rgba(255, 107, 53, 0.6);
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #ff7f45, #e8622c);
+  border: 1px solid #0a0e12;
+  box-shadow: 0 0 8px rgba(232, 98, 44, 0.55), inset 0 1px 0 rgba(255,255,255,0.25);
   transition: transform 0.1s ease;
 }
-input[type='range']::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-}
+input[type='range']::-webkit-slider-thumb:hover { transform: scale(1.12); }
 input[type='range']::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #ff6b35;
-  border: 2px solid #0b0f16;
-  box-shadow: 0 0 8px rgba(255, 107, 53, 0.6);
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #ff7f45, #e8622c);
+  border: 1px solid #0a0e12;
+  box-shadow: 0 0 8px rgba(232, 98, 44, 0.55);
 }
 
-/* Jemný scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: #0b0f16;
-}
-::-webkit-scrollbar-thumb {
-  background: #2a3342;
-  border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #3a4556;
-}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0a0e12; }
+::-webkit-scrollbar-thumb { background: #243044; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #31405a; }

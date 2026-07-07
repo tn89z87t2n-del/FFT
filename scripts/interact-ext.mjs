@@ -1,6 +1,6 @@
 import { chromium } from 'playwright'
 const out = '/tmp/claude-0/-home-user-FFT/562581ab-127c-5691-91de-daff2cfb7086/scratchpad'
-const browser = await chromium.launch()
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 const page = await browser.newPage({ viewport: { width: 1360, height: 940 } })
 const errors = []
 page.on('console', (m) => {
@@ -8,7 +8,7 @@ page.on('console', (m) => {
     errors.push(m.text())
 })
 page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message))
-await page.goto('http://localhost:4200/', { waitUntil: 'networkidle' })
+await page.goto('http://localhost:4300/', { waitUntil: 'networkidle' })
 
 // 1) statické sekcie
 for (const id of ['benchmark', 'windowing', 'outro']) {
@@ -45,7 +45,7 @@ console.log('butterfly hover done')
 
 // 5) mobil
 const mob = await browser.newPage({ viewport: { width: 390, height: 800 } })
-await mob.goto('http://localhost:4200/', { waitUntil: 'networkidle' })
+await mob.goto('http://localhost:4300/', { waitUntil: 'networkidle' })
 await mob.waitForTimeout(800)
 await mob.screenshot({ path: `${out}/ext-mobile.png` })
 console.log('mobile done')
