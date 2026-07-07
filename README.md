@@ -8,10 +8,14 @@ spracovania signálov, ktorí chcú FFT pochopiť intuitívne aj formálne.
 Obsah je v **slovenčine**, štandardné technické termíny (FFT, DFT, twiddle
 factor, butterfly, bit-reversal, bin, aliasing, windowing…) ostávajú v angličtine.
 
-> 🔴 **Živá ukážka:** https://tn89z87t2n-del.github.io/FFT/
+> 🔴 **Živá ukážka (v1):** https://tn89z87t2n-del.github.io/FFT/
 >
-> (Nasadzuje sa automaticky z vetvy `main` cez GitHub Actions — po prvom
-> nasadení môže prvé načítanie chvíľu trvať.)
+> 🧪 **FFT LAB — Extended v2:** https://tn89z87t2n-del.github.io/FFT/extended/
+> — rozšírená verzia v štýle laboratórneho prístroja: butterfly diagram
+> s hover dátovým tokom, twiddle matica, live benchmark, waterfall spektrogram
+> z vlastnej FFT a ďalšie. Zdroják v priečinku [`extended/`](extended/).
+>
+> (Obe verzie sa nasadzujú z vetvy `main` cez GitHub Actions na vetvu `gh-pages`.)
 
 ## Čo stránka obsahuje
 
